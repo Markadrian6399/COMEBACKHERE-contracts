@@ -1,0 +1,4 @@
+target/
+*.wasm
+coverage/
+**/test_snapshots/
