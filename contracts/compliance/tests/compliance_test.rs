@@ -550,3 +550,35 @@ fn unpause_restores_allow_address_and_allow_address_until() {
     client.allow_address_until(&admin, &subject2, &expires_at);
     assert!(client.is_allowed(&subject2));
 }
+
+// ── #85 Old admin loses authority after admin transfer completes ──────────────
+
+#[test]
+fn old_admin_allow_address_returns_unauthorized_after_transfer() {
+    let (env, admin, subject, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+    let result = client.try_allow_address(&admin, &subject);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn old_admin_block_address_returns_unauthorized_after_transfer() {
+    let (env, admin, subject, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+    let result = client.try_block_address(&admin, &subject, &None);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn old_admin_pause_returns_unauthorized_after_transfer() {
+    let (env, admin, _subject, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+    let result = client.try_pause(&admin);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
