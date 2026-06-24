@@ -518,3 +518,35 @@ fn export_snapshot_expired_temp_allow_shows_expired() {
     let snapshot = client.export_snapshot(&admin);
     assert_eq!(snapshot.get(0).unwrap().1, AddressState::Expired);
 }
+
+// ── #83 Pause regression: allow entrypoints reject while paused ───────────────
+
+#[test]
+fn paused_contract_rejects_allow_address() {
+    let (_env, admin, subject, client) = setup();
+    client.pause(&admin);
+    let result = client.try_allow_address(&admin, &subject);
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+}
+
+#[test]
+fn paused_contract_rejects_allow_address_until() {
+    let (env, admin, subject, client) = setup();
+    let expires_at = env.ledger().timestamp() + 1000;
+    client.pause(&admin);
+    let result = client.try_allow_address_until(&admin, &subject, &expires_at);
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+}
+
+#[test]
+fn unpause_restores_allow_address_and_allow_address_until() {
+    let (env, admin, subject, client) = setup();
+    let subject2 = Address::generate(&env);
+    let expires_at = env.ledger().timestamp() + 1000;
+    client.pause(&admin);
+    client.unpause(&admin);
+    client.allow_address(&admin, &subject);
+    assert!(client.is_allowed(&subject));
+    client.allow_address_until(&admin, &subject2, &expires_at);
+    assert!(client.is_allowed(&subject2));
+}
