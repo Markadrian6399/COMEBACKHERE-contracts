@@ -164,6 +164,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "comebackhere-tests"
+version = "1.0.0"
+dependencies = [
+ "comebackhere-compliance",
+ "comebackhere-invoice",
+ "comebackhere-treasury",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "comebackhere-treasury"
 version = "1.0.0"
 dependencies = [
