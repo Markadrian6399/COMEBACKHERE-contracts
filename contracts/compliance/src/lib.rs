@@ -26,6 +26,7 @@ impl ComplianceContract {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage().instance().set(&DataKey::SchemaVersion, &1u32);
         Ok(())
     }
 
@@ -129,6 +130,14 @@ impl ComplianceContract {
         env.storage()
             .persistent()
             .get(&DataKey::BlockReason(address))
+    }
+
+    /// Returns the schema version set at initialization.
+    pub fn get_schema_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SchemaVersion)
+            .unwrap_or(1)
     }
 
     /// Allow an address until a specific ledger timestamp (seconds since epoch).
