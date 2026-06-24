@@ -1,10 +1,5 @@
 [workspace]
-members = [
-    "contracts/invoice",
-    "contracts/treasury",
-    "contracts/compliance",
-    "crates/protocol-errors",
-]
+members = ["contracts/invoice", "contracts/treasury", "contracts/compliance", "tests"]
 resolver = "2"
 
 [workspace.package]
