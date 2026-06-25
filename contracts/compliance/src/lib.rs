@@ -253,6 +253,71 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Assign an operator address. Only admin may call this.
+    /// The operator can invoke read-only compliance queries (`get_allow_expiry`,
+    /// `address_status`) without holding admin privileges.
+    pub fn set_operator(env: Env, admin: Address, operator: Address) -> Result<(), ContractError> {
+        Self::require_admin(&env, &admin)?;
+        env.storage().instance().set(&DataKey::Operator, &operator);
+        env.events()
+            .publish((Symbol::new(&env, "operator_set"),), operator);
+        Ok(())
+    }
+
+    /// Returns the raw expiry timestamp (seconds since epoch) for `address`, or
+    /// `None` if the address has no time-limited allow entry.
+    /// Requires admin or operator authentication.
+    pub fn get_allow_expiry(
+        env: Env,
+        caller: Address,
+        address: Address,
+    ) -> Result<Option<u64>, ContractError> {
+        Self::require_admin_or_operator(&env, &caller)?;
+        Ok(env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::AllowedUntil(address)))
+    }
+
+    /// Returns the compliance state for `address` (Allowed, Blocked, or Expired).
+    /// Requires admin or operator authentication.
+    pub fn address_status(
+        env: Env,
+        caller: Address,
+        address: Address,
+    ) -> Result<AddressState, ContractError> {
+        Self::require_admin_or_operator(&env, &caller)?;
+        let blocked: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Blocked(address.clone()))
+            .unwrap_or(false);
+        if blocked {
+            return Ok(AddressState::Blocked);
+        }
+        let allowed: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Allowed(address.clone()))
+            .unwrap_or(false);
+        if !allowed {
+            return Ok(AddressState::Blocked);
+        }
+        if let Some(expires_at) = env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::AllowedUntil(address))
+        {
+            if env.ledger().timestamp() < expires_at {
+                Ok(AddressState::Allowed)
+            } else {
+                Ok(AddressState::Expired)
+            }
+        } else {
+            Ok(AddressState::Allowed)
+        }
+    }
+
     fn require_admin(env: &Env, admin: &Address) -> Result<(), ContractError> {
         admin.require_auth();
         let stored: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
@@ -260,6 +325,24 @@ impl ComplianceContract {
             return Err(ContractError::Unauthorized);
         }
         Ok(())
+    }
+
+    fn require_admin_or_operator(env: &Env, caller: &Address) -> Result<(), ContractError> {
+        caller.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        if stored_admin == *caller {
+            return Ok(());
+        }
+        if let Some(operator) = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::Operator)
+        {
+            if operator == *caller {
+                return Ok(());
+            }
+        }
+        Err(ContractError::Unauthorized)
     }
 
     fn require_not_paused(env: &Env) -> Result<(), ContractError> {

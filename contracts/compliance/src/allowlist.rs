@@ -5,6 +5,7 @@ use soroban_sdk::{contracterror, contracttype, Address};
 pub enum DataKey {
     Admin,
     PendingAdmin,
+    Operator,
     Allowed(Address),
     Blocked(Address),
     AllowedUntil(Address),
