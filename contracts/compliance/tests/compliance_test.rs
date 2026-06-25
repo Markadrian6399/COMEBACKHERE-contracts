@@ -518,3 +518,99 @@ fn export_snapshot_expired_temp_allow_shows_expired() {
     let snapshot = client.export_snapshot(&admin);
     assert_eq!(snapshot.get(0).unwrap().1, AddressState::Expired);
 }
+
+// ── #66 Two-step admin transfer tests ────────────────────────────────────────
+
+#[test]
+fn transfer_admin_sets_pending_and_accept_succeeds() {
+    let (env, admin, _subject, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&admin, &new_admin);
+    // happy path: correct pending admin accepts
+    client.accept_admin(&new_admin);
+    // new admin can now manage addresses
+    let addr = Address::generate(&env);
+    client.allow_address(&new_admin, &addr);
+    assert!(client.is_allowed(&addr));
+}
+
+#[test]
+fn accept_admin_by_wrong_address_returns_unauthorized() {
+    let (env, admin, _subject, client) = setup();
+    let new_admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    client.transfer_admin(&admin, &new_admin);
+    let result = client.try_accept_admin(&impostor);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn accept_admin_without_pending_admin_panics() {
+    let (_env, _admin, _subject, client) = setup();
+    // No transfer_admin called — expect a panic (None unwrap)
+    let result = client.try_accept_admin(&Address::generate(&_env));
+    assert!(result.is_err());
+}
+
+// ── #67 address_status entrypoint tests ──────────────────────────────────────
+
+#[test]
+fn address_status_never_allowed() {
+    use compliance::AddressStatus;
+    let (_env, _admin, subject, client) = setup();
+    let status: AddressStatus = client.address_status(&subject);
+    assert!(!status.allowed);
+    assert!(!status.blocked);
+    assert!(status.expires_at.is_none());
+    assert!(!status.is_currently_allowed);
+}
+
+#[test]
+fn address_status_allowed() {
+    use compliance::AddressStatus;
+    let (_env, admin, subject, client) = setup();
+    client.allow_address(&admin, &subject);
+    let status: AddressStatus = client.address_status(&subject);
+    assert!(status.allowed);
+    assert!(!status.blocked);
+    assert!(status.expires_at.is_none());
+    assert!(status.is_currently_allowed);
+}
+
+#[test]
+fn address_status_blocked() {
+    use compliance::AddressStatus;
+    let (_env, admin, subject, client) = setup();
+    client.allow_address(&admin, &subject);
+    client.block_address(&admin, &subject);
+    let status: AddressStatus = client.address_status(&subject);
+    assert!(status.allowed);
+    assert!(status.blocked);
+    assert!(!status.is_currently_allowed);
+}
+
+#[test]
+fn address_status_temp_allow_active() {
+    use compliance::AddressStatus;
+    let (env, admin, subject, client) = setup();
+    let now = env.ledger().timestamp();
+    client.allow_address_until(&admin, &subject, &(now + 1000));
+    let status: AddressStatus = client.address_status(&subject);
+    assert!(status.allowed);
+    assert!(!status.blocked);
+    assert_eq!(status.expires_at, Some(now + 1000));
+    assert!(status.is_currently_allowed);
+}
+
+#[test]
+fn address_status_temp_allow_expired() {
+    use compliance::AddressStatus;
+    let (env, admin, subject, client) = setup();
+    let now = env.ledger().timestamp();
+    client.allow_address_until(&admin, &subject, &now);
+    let status: AddressStatus = client.address_status(&subject);
+    assert!(status.allowed);
+    assert!(!status.blocked);
+    assert_eq!(status.expires_at, Some(now));
+    assert!(!status.is_currently_allowed);
+}

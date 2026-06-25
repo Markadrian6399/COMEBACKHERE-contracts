@@ -1,7 +1,7 @@
 #![no_std]
 
 mod allowlist;
-pub use allowlist::{AddressState, ComplianceError, DataKey};
+pub use allowlist::{AddressState, AddressStatus, ComplianceError, DataKey};
 
 use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, Symbol, Vec};
 
@@ -55,6 +55,32 @@ impl ComplianceContract {
             return env.ledger().timestamp() < expires_at;
         }
         true
+    }
+
+    pub fn address_status(env: Env, address: Address) -> AddressStatus {
+        let blocked: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Blocked(address.clone()))
+            .unwrap_or(false);
+        let allowed: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Allowed(address.clone()))
+            .unwrap_or(false);
+        let expires_at: Option<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AllowedUntil(address));
+        let is_currently_allowed = !blocked
+            && allowed
+            && expires_at.map_or(true, |exp| env.ledger().timestamp() < exp);
+        AddressStatus {
+            allowed,
+            blocked,
+            expires_at,
+            is_currently_allowed,
+        }
     }
 
     pub fn allow_address(env: Env, admin: Address, address: Address) -> Result<(), ContractError> {
