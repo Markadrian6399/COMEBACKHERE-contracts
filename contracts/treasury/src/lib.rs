@@ -38,6 +38,10 @@ pub struct TreasuryContract;
 
 #[contractimpl]
 impl TreasuryContract {
+    /// Initialises the treasury with `admin` as owner and `threshold` as the multisig approval
+    /// weight required to execute settlements.
+    /// Errors: `AlreadyInitialized`, `ZeroThreshold`.
+    /// Emits: `treasury_initialized`.
     pub fn initialize(env: Env, admin: Address, threshold: u32) -> Result<(), TreasuryError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(TreasuryError::AlreadyInitialized);
@@ -56,12 +60,18 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Registers or updates the approval weight of `signer` (admin-only). Weight 0 deactivates the signer.
+    /// Emits: `signer_weight_set`.
     pub fn set_signer(env: Env, admin: Address, signer: Address, weight: u32) {
         Self::require_admin(&env, &admin);
         env.storage().instance().set(&DataKey::Signer(signer.clone()), &weight);
         env.events().publish((Symbol::new(&env, "signer_weight_set"), signer), weight);
     }
 
+    /// Proposes a new settlement of `amount` tokens payable to `merchant_address`.
+    /// Preconditions: contract not paused; `signer` must be an authorised signer with non-zero weight.
+    /// Panics: `ContractPaused`, `UnauthorizedSigner`, `InvalidAmount`.
+    /// Emits: `settlement_proposed`.
     pub fn propose_settlement(env: Env, signer: Address, merchant_address: Address, amount: i128) -> u64 {
         Self::require_not_paused(&env);
         require_authorized_signer(&env, &signer);
@@ -83,10 +93,14 @@ impl TreasuryContract {
         id
     }
 
+    /// Alias of `propose_settlement` for partial-settlement workflows.
     pub fn propose_partial_settlement(env: Env, signer: Address, merchant_address: Address, amount: i128) -> u64 {
         Self::propose_settlement(env, signer, merchant_address, amount)
     }
 
+    /// Adds `signer`'s weight to the approval set of a pending settlement.
+    /// Panics: `ContractPaused`, `UnauthorizedSigner`, `SettlementNotFound`, `AlreadyExecuted`.
+    /// Emits: `settlement_approved`.
     pub fn approve_settlement(env: Env, signer: Address, settlement_id: u64) -> Settlement {
         Self::require_not_paused(&env);
         require_authorized_signer(&env, &signer);
@@ -103,6 +117,9 @@ impl TreasuryContract {
         settlement
     }
 
+    /// Approves a pending settlement with a `partial_amount` cap; accumulates `signer`'s weight.
+    /// Panics: `ContractPaused`, `UnauthorizedSigner`, `SettlementNotFound`, `AlreadyExecuted`, `InvalidAmount`.
+    /// Emits: `settlement_partial_approved`.
     pub fn approve_partial_settlement(env: Env, signer: Address, settlement_id: u64, partial_amount: i128) -> Settlement {
         Self::require_not_paused(&env);
         require_authorized_signer(&env, &signer);
@@ -120,6 +137,12 @@ impl TreasuryContract {
         settlement
     }
 
+    /// Transfers the settlement amount to the merchant via `token_contract`.
+    /// Preconditions: not paused; approval weight meets threshold; token is on allowlist (if non-empty).
+    /// Panics: `ContractPaused`, `UnauthorizedSigner`, `SettlementNotFound`, `SettlementOnHold`,
+    ///         `AlreadyExecuted`, `ThresholdNotConfigured`, `ThresholdNotMet`,
+    ///         `InvalidTokenContract`, `TokenNotAllowed`.
+    /// Emits: `settlement_executed`.
     pub fn execute_settlement(env: Env, signer: Address, settlement_id: u64, token_contract: Address) {
         Self::require_not_paused(&env);
         require_authorized_signer(&env, &signer);
@@ -144,6 +167,10 @@ impl TreasuryContract {
         env.events().publish((Symbol::new(&env, "settlement_executed"), settlement_id), settlement);
     }
 
+    /// Transfers `partial_amount` tokens to the merchant and marks the settlement as `PartiallyExecuted`.
+    /// Panics: `ContractPaused`, `UnauthorizedSigner`, `SettlementNotFound`, `AlreadyExecuted`,
+    ///         `InvalidAmount`, `ThresholdNotConfigured`, `ThresholdNotMet`.
+    /// Emits: `settlement_partial_executed`.
     pub fn partially_execute_settlement(env: Env, signer: Address, settlement_id: u64, partial_amount: i128, token_contract: Address) {
         Self::require_not_paused(&env);
         require_authorized_signer(&env, &signer);
@@ -165,6 +192,9 @@ impl TreasuryContract {
         env.events().publish((Symbol::new(&env, "settlement_partial_executed"), settlement_id), settlement);
     }
 
+    /// Cancels a pending settlement, preventing further approvals or execution.
+    /// Panics: `ContractPaused`, `UnauthorizedSigner`, `SettlementNotFound`, `SettlementNotCancellable`.
+    /// Emits: `settlement_cancelled`.
     pub fn cancel_settlement(env: Env, signer: Address, settlement_id: u64) {
         Self::require_not_paused(&env);
         require_authorized_signer(&env, &signer);
@@ -177,6 +207,7 @@ impl TreasuryContract {
         env.events().publish((Symbol::new(&env, "settlement_cancelled"), settlement_id), settlement);
     }
 
+    /// Returns all settlements currently in `Pending` status.
     pub fn get_pending_settlements(env: Env) -> Vec<Settlement> {
         let count: u64 = env.storage().instance().get(&DataKey::SettlementCount).unwrap_or(0);
         let mut pending = Vec::new(&env);
@@ -190,6 +221,7 @@ impl TreasuryContract {
         pending
     }
 
+    /// Returns a page of pending settlements: skips the first `start` entries and returns up to `limit`.
     pub fn get_pending_settlements_page(env: Env, start: u64, limit: u64) -> Vec<Settlement> {
         let count: u64 = env.storage().instance().get(&DataKey::SettlementCount).unwrap_or(0);
         let mut page = Vec::new(&env);
@@ -208,11 +240,16 @@ impl TreasuryContract {
         page
     }
 
+    /// Returns the settlement with the given `settlement_id`.
+    /// Panics: `SettlementNotFound`.
     pub fn get_settlement(env: Env, settlement_id: u64) -> Settlement {
         env.storage().persistent().get(&DataKey::Settlement(settlement_id))
             .unwrap_or_else(|| panic!("SettlementNotFound"))
     }
 
+    /// Updates the multisig approval threshold required to execute settlements (admin-only).
+    /// Errors: `ZeroThreshold`.
+    /// Emits: `threshold_updated`.
     pub fn update_threshold(env: Env, admin: Address, new_threshold: u32) -> Result<(), TreasuryError> {
         Self::require_admin(&env, &admin);
         if new_threshold == 0 { return Err(TreasuryError::ZeroThreshold); }
@@ -221,18 +258,26 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Pauses the contract, blocking all state-mutating operations except admin functions (admin-only).
+    /// Emits: `treasury_paused`.
     pub fn pause(env: Env, admin: Address) {
         Self::require_admin(&env, &admin);
         env.storage().instance().set(&DataKey::Paused, &true);
         env.events().publish((Symbol::new(&env, "treasury_paused"),), admin);
     }
 
+    /// Resumes normal operations after a pause (admin-only).
+    /// Emits: `treasury_unpaused`.
     pub fn unpause(env: Env, admin: Address) {
         Self::require_admin(&env, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.events().publish((Symbol::new(&env, "treasury_unpaused"),), admin);
     }
 
+    /// Raises a dispute against `settlement_id`, placing it on hold while the dispute is open.
+    /// Preconditions: contract not paused; `amount` must be positive.
+    /// Panics: `ContractPaused`, `InvalidAmount`.
+    /// Emits: `dispute_raised`.
     pub fn raise_dispute(env: Env, claimant: Address, settlement_id: u64, counterparty: Address, amount: i128) -> u64 {
         Self::require_not_paused(&env);
         claimant.require_auth();
@@ -258,6 +303,9 @@ impl TreasuryContract {
         id
     }
 
+    /// Resolves an open dispute in favour of claimant or counterparty (admin-only).
+    /// Panics: `DisputeNotFound`, `DisputeAlreadyResolved`, `ContractPaused`.
+    /// Emits: `dispute_resolved`.
     pub fn resolve_dispute(env: Env, admin: Address, dispute_id: u64, in_favor_of_claimant: bool) {
         Self::require_admin(&env, &admin);
         Self::require_not_paused(&env);
@@ -269,6 +317,10 @@ impl TreasuryContract {
         env.events().publish((Symbol::new(&env, "dispute_resolved"), dispute_id), dispute);
     }
 
+    /// Casts a weighted signer vote on a dispute; auto-resolves when cumulative weight meets threshold.
+    /// Panics: `ContractPaused`, `UnauthorizedSigner`, `DisputeNotFound`, `DisputeAlreadyResolved`,
+    ///         `ResolutionDirectionMismatch`, `ThresholdNotConfigured`.
+    /// Emits: `dispute_resolution_voted`.
     pub fn vote_dispute_resolution(env: Env, signer: Address, dispute_id: u64, in_favor_of_claimant: bool) {
         Self::require_not_paused(&env);
         require_authorized_signer(&env, &signer);
@@ -293,6 +345,9 @@ impl TreasuryContract {
         env.events().publish((Symbol::new(&env, "dispute_resolution_voted"), dispute_id), dispute);
     }
 
+    /// Deposits `amount` tokens from `from` into the treasury via `token_contract`.
+    /// Panics: `ContractPaused`, `InvalidAmount`.
+    /// Emits: `deposit`.
     pub fn deposit(env: Env, from: Address, token_contract: Address, amount: i128) {
         Self::require_not_paused(&env);
         from.require_auth();
@@ -306,6 +361,9 @@ impl TreasuryContract {
         env.events().publish((Symbol::new(&env, "deposit"), from), amount);
     }
 
+    /// Withdraws `amount` tokens from the treasury to `to` via `token_contract`.
+    /// Panics: `ContractPaused`, `InvalidAmount`, `InsufficientBalance`.
+    /// Emits: `withdraw`.
     pub fn withdraw(env: Env, to: Address, token_contract: Address, amount: i128) {
         Self::require_not_paused(&env);
         to.require_auth();
@@ -320,6 +378,24 @@ impl TreasuryContract {
         env.events().publish((Symbol::new(&env, "withdraw"), to), amount);
     }
 
+    /// Drains the full token balance of the treasury to `recipient` (admin-only, paused-only emergency drain).
+    /// Panics: `Unauthorized`, `NotPaused`.
+    /// Emits: `treasury_drained`.
+    pub fn withdraw_all(env: Env, admin: Address, token_contract: Address, recipient: Address) {
+        Self::require_admin(&env, &admin);
+        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        if !paused { panic!("NotPaused"); }
+        let treasury = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token_contract);
+        let balance = token_client.balance(&treasury);
+        if balance > 0 {
+            token_client.transfer(&treasury, &recipient, &balance);
+        }
+        env.events().publish((Symbol::new(&env, "treasury_drained"),), recipient);
+    }
+
+    /// Adds `token` to the settlement token allowlist (admin-only). No-op if already present.
+    /// Emits: `token_allowed`.
     pub fn add_allowed_token(env: Env, admin: Address, token: Address) {
         Self::require_admin(&env, &admin);
         let mut allowlist: Vec<Address> = env.storage().instance()
@@ -331,6 +407,8 @@ impl TreasuryContract {
         }
     }
 
+    /// Removes `token` from the settlement token allowlist (admin-only).
+    /// Emits: `token_removed`.
     pub fn remove_allowed_token(env: Env, admin: Address, token: Address) {
         Self::require_admin(&env, &admin);
         let allowlist: Vec<Address> = env.storage().instance()
@@ -343,11 +421,14 @@ impl TreasuryContract {
         env.events().publish((Symbol::new(&env, "token_removed"),), token);
     }
 
+    /// Returns the current list of allowed token contract addresses.
     pub fn get_allowed_tokens(env: Env) -> Vec<Address> {
         env.storage().instance().get(&DataKey::TokenAllowlist)
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Proposes replacing `old_signer` with `new_signer` in the authorised signer set.
+    /// Emits: `rotation_proposed`.
     pub fn propose_signer_rotation(env: Env, proposer: Address, old_signer: Address, new_signer: Address) -> u64 {
         require_authorized_signer(&env, &proposer);
         let count: u64 = env.storage().instance().get(&DataKey::RotationCount).unwrap_or(0);
@@ -366,6 +447,9 @@ impl TreasuryContract {
         id
     }
 
+    /// Approves a pending signer rotation; executes the swap when cumulative weight meets threshold.
+    /// Panics: `UnauthorizedSigner`, `RotationNotFound`, `RotationAlreadyExecuted`.
+    /// Emits: `rotation_approved`; additionally `rotation_executed` when threshold is met.
     pub fn approve_signer_rotation(env: Env, approver: Address, rotation_id: u64) -> SignerRotationProposal {
         require_authorized_signer(&env, &approver);
         let mut proposal: SignerRotationProposal = env.storage().persistent()
@@ -389,6 +473,8 @@ impl TreasuryContract {
         proposal
     }
 
+    /// Sets or updates the payout address for `merchant` (merchant-only, not paused).
+    /// Emits: `merchant_payout_updated`.
     pub fn update_merchant_payout_address(env: Env, merchant: Address, new_payout_address: Address) {
         Self::require_not_paused(&env);
         merchant.require_auth();
@@ -396,10 +482,14 @@ impl TreasuryContract {
         env.events().publish((Symbol::new(&env, "merchant_payout_updated"), merchant), new_payout_address);
     }
 
+    /// Returns the registered payout address for `merchant`, or `None` if not set.
     pub fn get_merchant_payout_address(env: Env, merchant: Address) -> Option<Address> {
         env.storage().instance().get(&DataKey::MerchantPayoutAddress(merchant))
     }
 
+    /// Places a pending settlement on hold with a `reason` code (admin-only).
+    /// Panics: `Unauthorized`, `SettlementNotFound`, `AlreadyExecuted`.
+    /// Emits: `settlement_held`.
     pub fn hold_settlement(env: Env, admin: Address, settlement_id: u64, reason: SettlementHoldReason) {
         Self::require_admin(&env, &admin);
         let mut settlement: Settlement = env.storage().persistent()
@@ -412,6 +502,9 @@ impl TreasuryContract {
         env.events().publish((Symbol::new(&env, "settlement_held"), settlement_id), reason);
     }
 
+    /// Releases a held settlement back to `Pending` status (admin-only).
+    /// Panics: `Unauthorized`, `SettlementNotFound`, `NotOnHold`.
+    /// Emits: `settlement_released`.
     pub fn release_hold(env: Env, admin: Address, settlement_id: u64) {
         Self::require_admin(&env, &admin);
         let mut settlement: Settlement = env.storage().persistent()
@@ -438,21 +531,3 @@ impl TreasuryContract {
 
 #[cfg(test)]
 extern crate std;
-    /// Drains the full token balance of the treasury to `recipient` (admin-only, paused-only emergency drain).
-    /// Panics: `Unauthorized`, `NotPaused`.
-    /// Emits: `treasury_drained`.
-    pub fn withdraw_all(env: Env, admin: Address, token_contract: Address, recipient: Address) {
-        Self::require_admin(&env, &admin);
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        if !paused { panic!("NotPaused"); }
-        let treasury = env.current_contract_address();
-        let token_client = token::Client::new(&env, &token_contract);
-        let balance = token_client.balance(&treasury);
-        if balance > 0 {
-            token_client.transfer(&treasury, &recipient, &balance);
-        }
-        env.events().publish((Symbol::new(&env, "treasury_drained"),), recipient);
-    }
-
-    /// Adds `token` to the settlement token allowlist (admin-only). No-op if already present.
-    /// Emits: `token_allowed`.
