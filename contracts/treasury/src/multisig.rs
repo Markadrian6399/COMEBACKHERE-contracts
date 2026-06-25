@@ -113,4 +113,5 @@ pub enum DataKey {
     RotationCount,
     SignerRotation(u64),
     MerchantPayoutAddress(Address),
+    SignerList,
 }

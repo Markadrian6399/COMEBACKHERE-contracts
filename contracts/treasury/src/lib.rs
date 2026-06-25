@@ -58,6 +58,9 @@ impl TreasuryContract {
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::DisputeCount, &0u64);
         env.storage().instance().set(&DataKey::Signer(admin.clone()), &1u32);
+        let mut signer_list = Vec::new(&env);
+        signer_list.push_back(admin.clone());
+        env.storage().instance().set(&DataKey::SignerList, &signer_list);
         env.events().publish((Symbol::new(&env, "treasury_initialized"),), admin);
         Ok(())
     }
@@ -67,6 +70,20 @@ impl TreasuryContract {
     pub fn set_signer(env: Env, admin: Address, signer: Address, weight: u32) {
         Self::require_admin(&env, &admin);
         env.storage().instance().set(&DataKey::Signer(signer.clone()), &weight);
+        let mut list: Vec<Address> = env.storage().instance()
+            .get(&DataKey::SignerList).unwrap_or_else(|| Vec::new(&env));
+        if weight > 0 {
+            if !list.contains(&signer) {
+                list.push_back(signer.clone());
+                env.storage().instance().set(&DataKey::SignerList, &list);
+            }
+        } else {
+            let mut updated = Vec::new(&env);
+            for s in list.iter() {
+                if s != signer { updated.push_back(s); }
+            }
+            env.storage().instance().set(&DataKey::SignerList, &updated);
+        }
         env.events().publish((Symbol::new(&env, "signer_weight_set"), signer), weight);
     }
 
@@ -463,6 +480,19 @@ impl TreasuryContract {
     pub fn get_allowed_tokens(env: Env) -> Vec<Address> {
         env.storage().instance().get(&DataKey::TokenAllowlist)
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Returns all registered signers and their current weights.
+    pub fn get_all_signers(env: Env) -> Vec<(Address, u32)> {
+        let list: Vec<Address> = env.storage().instance()
+            .get(&DataKey::SignerList).unwrap_or_else(|| Vec::new(&env));
+        let mut result = Vec::new(&env);
+        for signer in list.iter() {
+            let weight: u32 = env.storage().instance()
+                .get(&DataKey::Signer(signer.clone())).unwrap_or(0);
+            result.push_back((signer, weight));
+        }
+        result
     }
 
     /// Proposes replacing `old_signer` with `new_signer` in the authorised signer set.
