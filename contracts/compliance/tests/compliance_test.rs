@@ -513,6 +513,154 @@ fn export_snapshot_expired_temp_allow_shows_expired() {
     assert_eq!(snapshot.get(0).unwrap().1, AddressState::Expired);
 }
 
+// ── Operator role tests ───────────────────────────────────────────────────────
+
+#[test]
+fn set_operator_as_admin_succeeds() {
+    let (env, admin, _subject, client) = setup();
+    let operator = Address::generate(&env);
+    client.set_operator(&admin, &operator);
+}
+
+#[test]
+fn set_operator_emits_operator_set_event() {
+    let (env, admin, _subject, client) = setup();
+    let operator = Address::generate(&env);
+    client.set_operator(&admin, &operator);
+    assert_eq!(last_event_symbol(&env), "operator_set");
+}
+
+#[test]
+fn set_operator_as_non_admin_fails() {
+    let (env, _admin, _subject, client) = setup();
+    let non_admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let result = client.try_set_operator(&non_admin, &operator);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn admin_can_call_get_allow_expiry() {
+    let (env, admin, subject, client) = setup();
+    let now = env.ledger().timestamp();
+    let expires_at = now + 1000;
+    client.allow_address_until(&admin, &subject, &expires_at);
+    let expiry = client.get_allow_expiry(&admin, &subject);
+    assert_eq!(expiry, Some(expires_at));
+}
+
+#[test]
+fn get_allow_expiry_returns_none_for_permanent_allow() {
+    let (_env, admin, subject, client) = setup();
+    client.allow_address(&admin, &subject);
+    let expiry = client.get_allow_expiry(&admin, &subject);
+    assert_eq!(expiry, None);
+}
+
+#[test]
+fn operator_can_call_get_allow_expiry() {
+    let (env, admin, subject, client) = setup();
+    let operator = Address::generate(&env);
+    client.set_operator(&admin, &operator);
+    let now = env.ledger().timestamp();
+    let expires_at = now + 1000;
+    client.allow_address_until(&admin, &subject, &expires_at);
+    let expiry = client.get_allow_expiry(&operator, &subject);
+    assert_eq!(expiry, Some(expires_at));
+}
+
+#[test]
+fn non_operator_cannot_call_get_allow_expiry() {
+    let (env, admin, subject, client) = setup();
+    let now = env.ledger().timestamp();
+    client.allow_address_until(&admin, &subject, &(now + 1000));
+    let non_operator = Address::generate(&env);
+    let result = client.try_get_allow_expiry(&non_operator, &subject);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn admin_can_call_address_status() {
+    use compliance::AddressState;
+    let (_env, admin, subject, client) = setup();
+    client.allow_address(&admin, &subject);
+    let status = client.address_status(&admin, &subject);
+    assert_eq!(status, AddressState::Allowed);
+}
+
+#[test]
+fn operator_can_call_address_status() {
+    use compliance::AddressState;
+    let (env, admin, subject, client) = setup();
+    let operator = Address::generate(&env);
+    client.set_operator(&admin, &operator);
+    client.allow_address(&admin, &subject);
+    let status = client.address_status(&operator, &subject);
+    assert_eq!(status, AddressState::Allowed);
+}
+
+#[test]
+fn non_operator_cannot_call_address_status() {
+    let (env, _admin, subject, client) = setup();
+    let non_operator = Address::generate(&env);
+    let result = client.try_address_status(&non_operator, &subject);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn address_status_blocked_shows_blocked() {
+    use compliance::AddressState;
+    let (_env, admin, subject, client) = setup();
+    client.allow_address(&admin, &subject);
+    client.block_address(&admin, &subject);
+    let status = client.address_status(&admin, &subject);
+    assert_eq!(status, AddressState::Blocked);
+}
+
+#[test]
+fn address_status_expired_temp_allow_shows_expired() {
+    use compliance::AddressState;
+    let (env, admin, subject, client) = setup();
+    let now = env.ledger().timestamp();
+    client.allow_address_until(&admin, &subject, &now);
+    let status = client.address_status(&admin, &subject);
+    assert_eq!(status, AddressState::Expired);
+}
+
+#[test]
+fn operator_cannot_modify_allowlist() {
+    let (env, admin, subject, client) = setup();
+    let operator = Address::generate(&env);
+    client.set_operator(&admin, &operator);
+    // operator has no allow_address privilege
+    let result = client.try_allow_address(&operator, &subject);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn operator_cannot_modify_blocklist() {
+    let (env, admin, subject, client) = setup();
+    let operator = Address::generate(&env);
+    client.set_operator(&admin, &operator);
+    client.allow_address(&admin, &subject);
+    // operator has no block_address privilege
+    let result = client.try_block_address(&operator, &subject);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn replacing_operator_revokes_old_operator_access() {
+    let (env, admin, subject, client) = setup();
+    let operator1 = Address::generate(&env);
+    let operator2 = Address::generate(&env);
+    client.set_operator(&admin, &operator1);
+    client.set_operator(&admin, &operator2);
+    // operator1 is no longer the operator
+    client.allow_address_until(&admin, &subject, &(env.ledger().timestamp() + 1000));
+    let result = client.try_get_allow_expiry(&operator1, &subject);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
 // ── Event emission assertions ─────────────────────────────────────────────────
 //
 // Each test calls exactly one state-changing entrypoint and asserts that the
