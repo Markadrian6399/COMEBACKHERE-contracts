@@ -438,3 +438,21 @@ impl TreasuryContract {
 
 #[cfg(test)]
 extern crate std;
+    /// Drains the full token balance of the treasury to `recipient` (admin-only, paused-only emergency drain).
+    /// Panics: `Unauthorized`, `NotPaused`.
+    /// Emits: `treasury_drained`.
+    pub fn withdraw_all(env: Env, admin: Address, token_contract: Address, recipient: Address) {
+        Self::require_admin(&env, &admin);
+        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        if !paused { panic!("NotPaused"); }
+        let treasury = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token_contract);
+        let balance = token_client.balance(&treasury);
+        if balance > 0 {
+            token_client.transfer(&treasury, &recipient, &balance);
+        }
+        env.events().publish((Symbol::new(&env, "treasury_drained"),), recipient);
+    }
+
+    /// Adds `token` to the settlement token allowlist (admin-only). No-op if already present.
+    /// Emits: `token_allowed`.
