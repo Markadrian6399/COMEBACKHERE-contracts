@@ -251,6 +251,7 @@ fn blocked_merchant_rejected_even_when_already_settled() {
 
     let workflow_id = env.register_contract(None, SettlementWorkflow);
     let workflow = SettlementWorkflowClient::new(&env, &workflow_id);
+    treasury.set_signer(&admin, &workflow_id, &1);
     assert!(workflow
         .try_execute_with_compliance(
             &compliance_id,

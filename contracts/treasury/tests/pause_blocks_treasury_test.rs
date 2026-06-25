@@ -84,7 +84,7 @@ fn setup() -> (
 
 #[test]
 fn pay_and_propose_succeeds_when_not_paused() {
-    let (_env, _admin, merchant, payer, invoice, invoice_id, _treasury, treasury_id, wf_id) =
+    let (_env, admin, merchant, payer, invoice, invoice_id, _treasury, treasury_id, wf_id) =
         setup();
 
     let inv_id = invoice
