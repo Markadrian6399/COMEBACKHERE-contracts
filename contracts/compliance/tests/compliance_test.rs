@@ -1,5 +1,12 @@
 use compliance::{ComplianceContract, ComplianceContractClient, ContractError};
-use soroban_sdk::{testutils::{Address as _, Events}, Address, Env, Symbol};
+use soroban_sdk::{testutils::{Address as _, Events}, Address, Env, FromVal, Symbol, Val};
+
+fn last_event_symbol(env: &Env) -> Symbol {
+    let events = env.events().all();
+    let (_contract, topics, _data) = events.last().unwrap();
+    let val: Val = topics.get(0).unwrap();
+    Symbol::from_val(env, &val)
+}
 
 fn setup() -> (Env, Address, Address, ComplianceContractClient<'static>) {
     let env = Env::default();
@@ -251,7 +258,7 @@ fn emits_address_allowed_event() {
     let (env, admin, subject, client) = setup();
     client.allow_address(&admin, &subject);
     assert!(client.is_allowed(&subject));
-    assert_eq!(last_event_symbol(&env), "address_allowed");
+    assert_eq!(last_event_symbol(&env), Symbol::new(&env, "address_allowed"));
 }
 
 // Verification: address_blocked event schema
@@ -264,7 +271,7 @@ fn emits_address_blocked_event() {
     assert!(client.is_allowed(&subject));
     client.block_address(&admin, &subject, &None);
     assert!(!client.is_allowed(&subject));
-    assert_eq!(last_event_symbol(&env), "address_blocked");
+    assert_eq!(last_event_symbol(&env), Symbol::new(&env, "address_blocked"));
 }
 
 // Verification: address_cleared event schema
@@ -278,7 +285,7 @@ fn emits_address_cleared_event() {
     assert!(!client.is_allowed(&subject));
     client.clear_address(&admin, &subject);
     assert!(client.is_allowed(&subject));
-    assert_eq!(last_event_symbol(&env), "address_cleared");
+    assert_eq!(last_event_symbol(&env), Symbol::new(&env, "address_cleared"));
 }
 
 // ── #121 Allow/Block/Clear precedence matrix ─────────────────────────────────
@@ -520,7 +527,7 @@ fn bulk_check_returns_correct_results() {
 fn bulk_check_blocked_address_returns_false() {
     let (env, admin, subject, client) = setup();
     client.allow_address(&admin, &subject);
-    client.block_address(&admin, &subject);
+    client.block_address(&admin, &subject, &None);
 
     let addresses = soroban_sdk::vec![&env, subject.clone()];
     let results = client.bulk_check_addresses(&addresses);
@@ -549,7 +556,7 @@ fn non_admin_cannot_call_allow_address() {
 fn non_admin_cannot_call_block_address() {
     let (env, _admin, subject, client) = setup();
     let non_admin = Address::generate(&env);
-    let result = client.try_block_address(&non_admin, &subject);
+    let result = client.try_block_address(&non_admin, &subject, &None);
     assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
 }
 
@@ -625,7 +632,7 @@ fn export_snapshot_reflects_state_changes() {
     assert_eq!(snap1.get(0).unwrap().1, AddressState::Allowed);
 
     client.block_address(&admin, &subject, &None);
-    let snap2 = client.export_snapshot(&admin);
+    let snap2 = client.export_snapshot(&admin, &0, &0);
     assert_eq!(snap2.get(0).unwrap().1, AddressState::Blocked);
 }
 
@@ -721,4 +728,39 @@ fn old_admin_pause_returns_unauthorized_after_transfer() {
     client.accept_admin(&new_admin);
     let result = client.try_pause(&admin);
     assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+// ── #65 get_allow_expiry read entrypoint tests ────────────────────────────────
+
+#[test]
+fn get_allow_expiry_returns_none_for_permanent_allow() {
+    let (_env, admin, subject, client) = setup();
+    client.allow_address(&admin, &subject);
+    assert_eq!(client.get_allow_expiry(&subject), None);
+}
+
+#[test]
+fn get_allow_expiry_returns_none_for_untracked_address() {
+    let (env, _admin, _subject, client) = setup();
+    let unknown = Address::generate(&env);
+    assert_eq!(client.get_allow_expiry(&unknown), None);
+}
+
+#[test]
+fn get_allow_expiry_returns_timestamp_for_temp_allow() {
+    let (env, admin, subject, client) = setup();
+    let expires_at = env.ledger().timestamp() + 1000;
+    client.allow_address_until(&admin, &subject, &expires_at);
+    assert_eq!(client.get_allow_expiry(&subject), Some(expires_at));
+}
+
+#[test]
+fn get_allow_expiry_returns_none_after_permanent_allow_clears_expiry() {
+    let (env, admin, subject, client) = setup();
+    let expires_at = env.ledger().timestamp() + 1000;
+    client.allow_address_until(&admin, &subject, &expires_at);
+    assert_eq!(client.get_allow_expiry(&subject), Some(expires_at));
+    // Permanent allow removes expiry
+    client.allow_address(&admin, &subject);
+    assert_eq!(client.get_allow_expiry(&subject), None);
 }
