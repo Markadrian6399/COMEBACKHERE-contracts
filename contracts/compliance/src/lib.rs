@@ -195,6 +195,24 @@ impl ComplianceContract {
             .unwrap_or(0u8)
     }
 
+    pub fn bulk_block_addresses(
+        env: Env,
+        admin: Address,
+        addresses: Vec<Address>,
+    ) -> Result<(), ContractError> {
+        Self::require_admin(&env, &admin)?;
+        for address in addresses.iter() {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Blocked(address.clone()), &true);
+            Self::track_address(&env, &address);
+            env.events()
+                .publish((Symbol::new(&env, "address_blocked"),), address);
+        }
+        Ok(())
+    }
+
+
     // Emergency policy: block_address and clear_address are permitted while paused
     // so the admin can remediate compromised addresses without unpausing first.
     pub fn block_address(
