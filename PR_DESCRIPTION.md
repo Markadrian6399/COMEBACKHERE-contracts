@@ -1,37 +1,23 @@
-# PR: feat(compliance): add revoke_allow entrypoint for soft de-listing
+# PR: test(compliance): AlreadyInitialized error on double initialize
 
 ## Summary
-Adds `revoke_allow(env, admin, address)` — a new entrypoint that removes the `Allowed` flag and any `AllowedUntil` expiry from an address without setting the `Blocked` flag. This enables operators to de-list an address from the allowlist without placing it on the blocklist.
+Adds an explicit test verifying that calling `initialize` twice on the same `ComplianceContract` instance returns `ContractError::AlreadyInitialized`.
 
-## Motivation
-Previously, the only way to remove an address from the allowlist was:
-- `block_address` — sets `Blocked = true`, marking the address as malicious
-- `clear_address` — sets `Blocked = false, Allowed = true`, which re-allows
+## Context
+The `initialize` function in `contracts/compliance/src/lib.rs:22-30` already guards against double initialization by checking if the `Admin` storage key exists and returning `Err(ContractError::AlreadyInitialized)` if set. This guard is critical for security — without it, an attacker could re-initialize the contract and seize admin control.
 
-Neither provides a clean "remove from allowlist but don't accuse" path. `revoke_allow` fills this gap for addresses that are no longer active but not suspected of wrongdoing.
+An explicit regression test ensures this guard is not accidentally removed or broken during future refactoring.
 
-## Implementation
-- **`contracts/compliance/src/lib.rs`**: New `revoke_allow` function in `ComplianceContract`:
-  - Authenticates the admin via `require_admin`
-  - Checks the contract is not paused via `require_not_paused`
-  - Removes `DataKey::Allowed` and `DataKey::AllowedUntil` from persistent storage
-  - Tracks the address (so `export_snapshot` captures the state transition)
-  - Emits an `address_revoked` event
+## Test added
+`reinitialize_is_rejected` in `contracts/compliance/tests/compliance_test.rs:177-182`
 
-## Tests added
-All in `contracts/compliance/tests/compliance_test.rs`:
-
-| Test | Description |
-|------|-------------|
-| `revoke_allow_removes_allowed_status` | Allow → revoke → `is_allowed` returns `false` |
-| `revoke_allow_does_not_block` | After revoke, re-allow succeeds (blocked flag was not set) |
-| `revoke_allow_removes_expiry` | Temp allow → revoke → `is_allowed` returns `false`, can re-allow |
-| `revoke_allow_returns_unauthorized_for_non_admin` | Non-admin gets `ContractError::Unauthorized` |
-| `revoke_allow_returns_contract_paused_when_paused` | When paused, returns `ContractError::ContractPaused` |
+- Calls `setup()` which invokes `initialize` once with a legitimate admin.
+- Attempts a second `initialize` call via `try_initialize` with a different address.
+- Asserts the result is `Err(Ok(ContractError::AlreadyInitialized))`.
 
 ## Verification
-All 40 tests pass: `cargo test --package comebackhere-compliance`
+The test passes under `cargo test --package compliance` (Soroban environment).
 
 ---
 
-Closes #76
+Closes #77
