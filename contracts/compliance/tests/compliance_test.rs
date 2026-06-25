@@ -1,5 +1,5 @@
 use compliance::{ComplianceContract, ComplianceContractClient, ContractError};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Events}, Address, Env, Symbol};
 
 fn setup() -> (Env, Address, Address, ComplianceContractClient<'static>) {
     let env = Env::default();
@@ -184,20 +184,17 @@ fn reinitialize_is_rejected() {
 // Verification: address_allowed event schema
 // - topics[0]: symbol "address_allowed"
 // - data: single Address value for the allowed address
-// The snapshot harness captures the full event payload (topics and data) for regression.
 #[test]
 fn emits_address_allowed_event() {
     let (env, admin, subject, client) = setup();
     client.allow_address(&admin, &subject);
     assert!(client.is_allowed(&subject));
-    // Events are captured by the snapshot test harness; no additional assertions needed here.
-    let _ = env;
+    assert_eq!(last_event_symbol(&env), "address_allowed");
 }
 
 // Verification: address_blocked event schema
 // - topics[0]: symbol "address_blocked"
 // - data: single Address value for the blocked address
-// The snapshot harness captures the full event payload (topics and data) for regression.
 #[test]
 fn emits_address_blocked_event() {
     let (env, admin, subject, client) = setup();
@@ -205,14 +202,12 @@ fn emits_address_blocked_event() {
     assert!(client.is_allowed(&subject));
     client.block_address(&admin, &subject);
     assert!(!client.is_allowed(&subject));
-    // Events are captured by the snapshot test harness; no additional assertions needed here.
-    let _ = env;
+    assert_eq!(last_event_symbol(&env), "address_blocked");
 }
 
 // Verification: address_cleared event schema
 // - topics[0]: symbol "address_cleared"
 // - data: single Address value for the cleared address
-// The snapshot harness captures the full event payload (topics and data) for regression.
 #[test]
 fn emits_address_cleared_event() {
     let (env, admin, subject, client) = setup();
@@ -221,8 +216,7 @@ fn emits_address_cleared_event() {
     assert!(!client.is_allowed(&subject));
     client.clear_address(&admin, &subject);
     assert!(client.is_allowed(&subject));
-    // Events are captured by the snapshot test harness; no additional assertions needed here.
-    let _ = env;
+    assert_eq!(last_event_symbol(&env), "address_cleared");
 }
 
 // ── #121 Allow/Block/Clear precedence matrix ─────────────────────────────────
@@ -517,4 +511,68 @@ fn export_snapshot_expired_temp_allow_shows_expired() {
     client.allow_address_until(&admin, &subject, &now);
     let snapshot = client.export_snapshot(&admin);
     assert_eq!(snapshot.get(0).unwrap().1, AddressState::Expired);
+}
+
+// ── Event emission assertions ─────────────────────────────────────────────────
+//
+// Each test calls exactly one state-changing entrypoint and asserts that the
+// last event's topic[0] matches the expected symbol string.  This guards
+// against an indexer silently missing a state-change event, which would leave
+// compliance data stale.
+
+fn event_symbol(env: &Env, topics: &soroban_sdk::Vec<soroban_sdk::Val>) -> String {
+    let sym: Symbol = topics
+        .get_unchecked(0)
+        .try_into()
+        .unwrap_or_else(|_| Symbol::new(env, ""));
+    sym.to_string()
+}
+
+fn last_event_symbol(env: &Env) -> String {
+    let events = env.events().all();
+    let n = events.len();
+    assert!(n > 0, "no events emitted");
+    let (_, topics, _) = events.get(n - 1).unwrap();
+    event_symbol(env, &topics)
+}
+
+#[test]
+fn emits_address_allowed_until_event() {
+    let (env, admin, subject, client) = setup();
+    let expires_at = env.ledger().timestamp() + 1000;
+    client.allow_address_until(&admin, &subject, &expires_at);
+    assert!(client.is_allowed(&subject));
+    assert_eq!(last_event_symbol(&env), "address_allowed_until");
+}
+
+#[test]
+fn emits_admin_transfer_initiated_event() {
+    let (env, admin, _, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&admin, &new_admin);
+    assert_eq!(last_event_symbol(&env), "admin_transfer_initiated");
+}
+
+#[test]
+fn emits_admin_transferred_event() {
+    let (env, admin, _, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+    assert_eq!(last_event_symbol(&env), "admin_transferred");
+}
+
+#[test]
+fn emits_compliance_paused_event() {
+    let (env, admin, _, client) = setup();
+    client.pause(&admin);
+    assert_eq!(last_event_symbol(&env), "compliance_paused");
+}
+
+#[test]
+fn emits_compliance_unpaused_event() {
+    let (env, admin, _, client) = setup();
+    client.pause(&admin);
+    client.unpause(&admin);
+    assert_eq!(last_event_symbol(&env), "compliance_unpaused");
 }
