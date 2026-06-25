@@ -3,7 +3,7 @@
 mod allowlist;
 pub use allowlist::{AddressState, ComplianceError, DataKey};
 
-use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contracterror, contractimpl, Address, Bytes, Env, Symbol, Vec};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -26,6 +26,7 @@ impl ComplianceContract {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage().instance().set(&DataKey::SchemaVersion, &1u32);
         Ok(())
     }
 
@@ -75,15 +76,68 @@ impl ComplianceContract {
 
     // Emergency policy: block_address and clear_address are permitted while paused
     // so the admin can remediate compromised addresses without unpausing first.
-    pub fn block_address(env: Env, admin: Address, address: Address) -> Result<(), ContractError> {
+    pub fn block_address(
+        env: Env,
+        admin: Address,
+        address: Address,
+        reason: Option<Bytes>,
+    ) -> Result<(), ContractError> {
         Self::require_admin(&env, &admin)?;
         env.storage()
             .persistent()
             .set(&DataKey::Blocked(address.clone()), &true);
+        if let Some(r) = reason {
+            env.storage()
+                .persistent()
+                .set(&DataKey::BlockReason(address.clone()), &r);
+        }
         Self::track_address(&env, &address);
         env.events()
             .publish((Symbol::new(&env, "address_blocked"),), address);
         Ok(())
+    }
+
+    /// Block an address until a specific ledger timestamp. Permitted while paused (emergency policy).
+    pub fn block_address_until(
+        env: Env,
+        admin: Address,
+        address: Address,
+        expires_at: u64,
+        reason: Option<Bytes>,
+    ) -> Result<(), ContractError> {
+        Self::require_admin(&env, &admin)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Blocked(address.clone()), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AllowedUntil(address.clone()), &expires_at);
+        if let Some(r) = reason {
+            env.storage()
+                .persistent()
+                .set(&DataKey::BlockReason(address.clone()), &r);
+        }
+        Self::track_address(&env, &address);
+        env.events().publish(
+            (Symbol::new(&env, "address_blocked_until"),),
+            (address, expires_at),
+        );
+        Ok(())
+    }
+
+    /// Returns the stored block reason for an address, if any.
+    pub fn get_block_reason(env: Env, address: Address) -> Option<Bytes> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::BlockReason(address))
+    }
+
+    /// Returns the schema version set at initialization.
+    pub fn get_schema_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SchemaVersion)
+            .unwrap_or(1)
     }
 
     /// Allow an address until a specific ledger timestamp (seconds since epoch).
