@@ -8,6 +8,8 @@ pub enum DataKey {
     Allowed(Address),
     Blocked(Address),
     AllowedUntil(Address),
+    BlockReason(Address),
+    SchemaVersion,
     Paused,
     AddressIndex,
 }
@@ -22,6 +24,7 @@ pub enum AddressState {
 
 #[contracterror]
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
 pub enum ComplianceError {
     AlreadyInitialized = 1,
 }
