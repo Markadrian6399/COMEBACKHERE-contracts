@@ -518,3 +518,24 @@ fn export_snapshot_expired_temp_allow_shows_expired() {
     let snapshot = client.export_snapshot(&admin);
     assert_eq!(snapshot.get(0).unwrap().1, AddressState::Expired);
 }
+
+// ── #68 Paused contract block/allow/clear policy ──────────────────────────────
+
+#[test]
+fn block_address_succeeds_while_paused() {
+    let (_env, admin, subject, client) = setup();
+    client.allow_address(&admin, &subject);
+    client.pause(&admin);
+    // block_address must succeed even while paused (emergency policy)
+    client.block_address(&admin, &subject);
+    assert!(!client.is_allowed(&subject));
+}
+
+#[test]
+fn allow_address_rejected_while_paused() {
+    let (env, admin, _, client) = setup();
+    client.pause(&admin);
+    let subject = Address::generate(&env);
+    let result = client.try_allow_address(&admin, &subject);
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+}

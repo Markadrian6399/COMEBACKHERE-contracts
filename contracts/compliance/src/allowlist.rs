@@ -10,6 +10,8 @@ pub enum DataKey {
     AllowedUntil(Address),
     Paused,
     AddressIndex,
+    AllowCount,
+    BlockCount,
 }
 
 #[contracttype]
