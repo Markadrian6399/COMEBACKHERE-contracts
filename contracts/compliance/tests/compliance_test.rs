@@ -501,6 +501,90 @@ fn allow_address_returns_contract_paused_when_paused() {
     assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
 }
 
+// ── #73 bulk_check_addresses tests ────────────────────────────────────────────
+
+#[test]
+fn bulk_check_returns_correct_results() {
+    let (env, admin, _, client) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let c = Address::generate(&env);
+
+    client.allow_address(&admin, &a);
+    client.allow_address(&admin, &b);
+    // c is never allowed
+
+    let addresses = soroban_sdk::vec![&env, a.clone(), b.clone(), c.clone()];
+    let results = client.bulk_check_addresses(&addresses);
+
+    assert_eq!(results.get(0).unwrap(), true);
+    assert_eq!(results.get(1).unwrap(), true);
+    assert_eq!(results.get(2).unwrap(), false);
+}
+
+#[test]
+fn bulk_check_blocked_address_returns_false() {
+    let (env, admin, subject, client) = setup();
+    client.allow_address(&admin, &subject);
+    client.block_address(&admin, &subject);
+
+    let addresses = soroban_sdk::vec![&env, subject.clone()];
+    let results = client.bulk_check_addresses(&addresses);
+    assert_eq!(results.get(0).unwrap(), false);
+}
+
+#[test]
+fn bulk_check_empty_input_returns_empty() {
+    let (env, _, _, client) = setup();
+    let addresses: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    let results = client.bulk_check_addresses(&addresses);
+    assert_eq!(results.len(), 0);
+}
+
+// ── #72 Unauthorized non-admin access tests ───────────────────────────────────
+
+#[test]
+fn non_admin_cannot_call_allow_address() {
+    let (env, _admin, subject, client) = setup();
+    let non_admin = Address::generate(&env);
+    let result = client.try_allow_address(&non_admin, &subject);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn non_admin_cannot_call_block_address() {
+    let (env, _admin, subject, client) = setup();
+    let non_admin = Address::generate(&env);
+    let result = client.try_block_address(&non_admin, &subject);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn non_admin_cannot_call_clear_address() {
+    let (env, _admin, subject, client) = setup();
+    let non_admin = Address::generate(&env);
+    let result = client.try_clear_address(&non_admin, &subject);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn non_admin_cannot_call_allow_address_until() {
+    let (env, _admin, subject, client) = setup();
+    let non_admin = Address::generate(&env);
+    let expires_at = env.ledger().timestamp() + 1000;
+    let result = client.try_allow_address_until(&non_admin, &subject, &expires_at);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn non_admin_cannot_call_transfer_admin() {
+    let (env, _admin, _, client) = setup();
+    let non_admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let result = client.try_transfer_admin(&non_admin, &new_admin);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
 // ── #80 export_snapshot tests ─────────────────────────────────────────────────
 
 #[test]
