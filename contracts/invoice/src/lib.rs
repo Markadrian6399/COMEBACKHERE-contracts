@@ -4,6 +4,7 @@ mod events;
 mod invoice;
 mod validation;
 
+pub use events::InvoiceAmountUpdatedEvent;
 pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress, MaybeBytes};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
@@ -113,6 +114,17 @@ impl InvoiceContract {
             .persistent()
             .set(&DataKey::Invoice(id), &invoice);
         env.storage().instance().set(&DataKey::InvoiceCount, &id);
+
+        // #9: maintain merchant invoice index
+        let idx_key = DataKey::MerchantInvoices(merchant.clone());
+        let mut ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&idx_key)
+            .unwrap_or(Vec::new(&env));
+        ids.push_back(id);
+        env.storage().persistent().set(&idx_key, &ids);
+
         events::invoice_created(&env, id, &invoice);
         Ok(id)
     }
@@ -276,6 +288,62 @@ impl InvoiceContract {
             .persistent()
             .set(&DataKey::Invoice(id), &invoice);
         events::invoice_refund_requested(&env, id, &invoice);
+        Ok(())
+    }
+
+    // --- #9: paginated merchant invoice index read ---
+
+    /// Return a page of invoice IDs for `merchant`.
+    /// `start` is a zero-based offset; `limit` caps the returned slice.
+    pub fn get_invoices_by_merchant(
+        env: Env,
+        merchant: Address,
+        start: u32,
+        limit: u32,
+    ) -> Vec<u64> {
+        let ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MerchantInvoices(merchant))
+            .unwrap_or(Vec::new(&env));
+        let total = ids.len();
+        let start = start.min(total);
+        let end = (start + limit).min(total);
+        let mut page = Vec::new(&env);
+        for i in start..end {
+            page.push_back(ids.get(i).unwrap());
+        }
+        page
+    }
+
+    // --- #15: two-step admin transfer ---
+
+    /// Initiate admin transfer. Current admin nominates `new_admin`.
+    pub fn transfer_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), InvoiceError> {
+        require_admin(&env, &admin)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        Ok(())
+    }
+
+    /// Complete admin transfer. Must be called by the pending admin.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), InvoiceError> {
+        new_admin.require_auth();
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .ok_or(InvoiceError::NoPendingAdmin)?;
+        if pending != new_admin {
+            return Err(InvoiceError::Unauthorized);
+        }
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
         Ok(())
     }
 

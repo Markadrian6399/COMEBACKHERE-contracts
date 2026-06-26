@@ -80,9 +80,12 @@ pub enum DataKey {
     Invoice(u64),
     InvoiceCount,
     Admin,
+    PendingAdmin,
     Paused,
     /// Configurable grace window (seconds) added to expires_at during mark_paid.
     GraceWindow,
     /// Tracks used merchant nonces: (merchant_address, nonce) → bool.
     MerchantNonce(Address, u64),
+    /// Secondary index: merchant address → Vec<u64> of invoice IDs.
+    MerchantInvoices(Address),
 }
