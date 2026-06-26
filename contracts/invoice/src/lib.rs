@@ -5,12 +5,12 @@ mod invoice;
 mod validation;
 
 pub use events::InvoiceAmountUpdatedEvent;
-pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress, MaybeBytes};
+pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress, MaybeBytes, StatusTransition};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
 use validation::{
     require_admin, require_expiry_not_too_long, require_not_paused, require_positive_amount,
-    require_usdc_precision,
+    require_usdc_precision, require_valid_payment_link_hash,
 };
 
 fn append_history(env: &Env, id: u64, from: InvoiceStatus, to: InvoiceStatus) {
@@ -351,6 +351,30 @@ impl InvoiceContract {
             .set(&DataKey::Invoice(id), &invoice);
         append_history(&env, id, InvoiceStatus::Paid, InvoiceStatus::RefundRequested);
         events::invoice_refund_requested(&env, id, &invoice);
+        Ok(())
+    }
+
+    /// Approve a refund request. Admin-only. Transitions RefundRequested → Refunded.
+    pub fn approve_refund(env: Env, admin: Address, id: u64) -> Result<(), InvoiceError> {
+        require_admin(&env, &admin)?;
+        require_not_paused(&env)?;
+
+        let mut invoice: Invoice = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Invoice(id))
+            .ok_or(InvoiceError::NotFound)?;
+
+        if invoice.status != InvoiceStatus::RefundRequested {
+            return Err(InvoiceError::NotRefundRequested);
+        }
+
+        invoice.status = InvoiceStatus::Refunded;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Invoice(id), &invoice);
+        append_history(&env, id, InvoiceStatus::RefundRequested, InvoiceStatus::Refunded);
+        events::refund_approved(&env, id, &invoice);
         Ok(())
     }
 
