@@ -74,6 +74,15 @@ pub struct Invoice {
     pub merchant_nonce: u64,
 }
 
+/// A single status transition recorded in an invoice's audit log.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StatusTransition {
+    pub from: InvoiceStatus,
+    pub to: InvoiceStatus,
+    pub timestamp: u64,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {

@@ -13,6 +13,22 @@ use validation::{
     require_usdc_precision,
 };
 
+fn append_history(env: &Env, id: u64, from: InvoiceStatus, to: InvoiceStatus) {
+    let key = DataKey::InvoiceHistory(id);
+    let mut history: Vec<StatusTransition> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    history.push_back(StatusTransition {
+        from,
+        to,
+        timestamp: env.ledger().timestamp(),
+    });
+    env.storage().persistent().set(&key, &history);
+}
+
+
 #[contract]
 pub struct InvoiceContract;
 
@@ -175,6 +191,7 @@ impl InvoiceContract {
         env.storage()
             .persistent()
             .set(&DataKey::Invoice(id), &invoice);
+        append_history(&env, id, InvoiceStatus::Pending, InvoiceStatus::Paid);
         events::invoice_paid(&env, id, &invoice);
         Ok(())
     }
@@ -200,6 +217,7 @@ impl InvoiceContract {
         env.storage()
             .persistent()
             .set(&DataKey::Invoice(id), &invoice);
+        append_history(&env, id, InvoiceStatus::Paid, InvoiceStatus::Released);
         events::escrow_released(&env, id, &invoice);
         Ok(())
     }
@@ -243,12 +261,21 @@ impl InvoiceContract {
         env.storage()
             .persistent()
             .set(&DataKey::Invoice(id), &invoice);
+        append_history(&env, id, InvoiceStatus::Pending, InvoiceStatus::Cancelled);
         events::invoice_cancelled(&env, id, &invoice);
         Ok(())
     }
 
+    /// Expire all pending invoices whose `expires_at` has passed.
+    ///
+    /// IDs that do not correspond to an existing invoice are silently skipped,
+    /// allowing callers to pass stale or cached ID lists without the call failing.
+    /// Only invoices in `Pending` status that have passed their expiry timestamp
+    /// are transitioned to `Expired`; all others (including missing IDs) are ignored.
+    /// Returns the count of invoices actually expired.
     pub fn batch_expire(env: Env, admin: Address, ids: Vec<u64>) -> Result<u32, InvoiceError> {
         require_admin(&env, &admin)?;
+        require_not_paused(&env)?;
         let now = env.ledger().timestamp();
         let mut expired_count: u32 = 0;
         for id in ids.iter() {
@@ -257,6 +284,7 @@ impl InvoiceContract {
                 if invoice.status == InvoiceStatus::Pending && now >= invoice.expires_at {
                     invoice.status = InvoiceStatus::Expired;
                     env.storage().persistent().set(&key, &invoice);
+                    append_history(&env, id, InvoiceStatus::Pending, InvoiceStatus::Expired);
                     events::invoice_expired(&env, id, &invoice);
                     expired_count += 1;
                 }
@@ -287,6 +315,7 @@ impl InvoiceContract {
         env.storage()
             .persistent()
             .set(&DataKey::Invoice(id), &invoice);
+        append_history(&env, id, InvoiceStatus::Paid, InvoiceStatus::RefundRequested);
         events::invoice_refund_requested(&env, id, &invoice);
         Ok(())
     }
