@@ -9,7 +9,8 @@ pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress, M
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
 use validation::{
-    require_admin, require_not_paused, require_positive_amount, require_usdc_precision,
+    require_admin, require_expiry_not_too_long, require_not_paused, require_positive_amount,
+    require_usdc_precision,
 };
 
 #[contract]
@@ -73,6 +74,7 @@ impl InvoiceContract {
         if expires_in_seconds == 0 {
             return Err(InvoiceError::ZeroDuration);
         }
+        require_expiry_not_too_long(expires_in_seconds)?;
 
         // #58: reject duplicate merchant nonce
         if merchant_nonce != 0 {
@@ -132,6 +134,7 @@ impl InvoiceContract {
         admin: Address,
         id: u64,
         payer: Address,
+        provided_metadata_hash: MaybeBytes,
     ) -> Result<(), InvoiceError> {
         require_admin(&env, &admin)?;
         require_not_paused(&env)?;
@@ -144,6 +147,12 @@ impl InvoiceContract {
 
         if invoice.status != InvoiceStatus::Pending {
             return Err(InvoiceError::NotPending);
+        }
+
+        if provided_metadata_hash != MaybeBytes::None
+            && provided_metadata_hash != invoice.metadata_hash
+        {
+            return Err(InvoiceError::MetadataMismatch);
         }
 
         // #55: apply grace window — payment is valid up to expires_at + grace_window
