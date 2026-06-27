@@ -91,7 +91,20 @@ impl ComplianceContract {
             .get(&DataKey::Blocked(address.clone()))
             .unwrap_or(false);
         if blocked {
-            return false;
+            // If there's a BlockedUntil timestamp, the block auto-expires once now >= unblock_at.
+            if let Some(unblock_at) = env
+                .storage()
+                .persistent()
+                .get::<_, u64>(&DataKey::BlockedUntil(address.clone()))
+            {
+                if env.ledger().timestamp() >= unblock_at {
+                    // Block has expired — fall through to allow check below.
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
         }
         let allowed: bool = env
             .storage()
@@ -241,7 +254,7 @@ impl ComplianceContract {
         env: Env,
         admin: Address,
         address: Address,
-        expires_at: u64,
+        unblock_at: u64,
         reason: Option<Bytes>,
     ) -> Result<(), ContractError> {
         Self::require_admin(&env, &admin)?;
@@ -250,7 +263,7 @@ impl ComplianceContract {
             .set(&DataKey::Blocked(address.clone()), &true);
         env.storage()
             .persistent()
-            .set(&DataKey::AllowedUntil(address.clone()), &expires_at);
+            .set(&DataKey::BlockedUntil(address.clone()), &unblock_at);
         if let Some(r) = reason {
             env.storage()
                 .persistent()
@@ -259,7 +272,7 @@ impl ComplianceContract {
         Self::track_address(&env, &address);
         env.events().publish(
             (Symbol::new(&env, "address_blocked_until"),),
-            (address, expires_at),
+            (address, unblock_at),
         );
         Ok(())
     }
@@ -405,6 +418,9 @@ impl ComplianceContract {
         env.storage()
             .persistent()
             .set(&DataKey::Blocked(address.clone()), &false);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::BlockedUntil(address.clone()));
         env.storage()
             .persistent()
             .set(&DataKey::Allowed(address.clone()), &true);
