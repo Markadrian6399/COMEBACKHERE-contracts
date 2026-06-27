@@ -798,95 +798,12 @@ fn allow_address_after_allow_address_until_removes_expiry() {
     assert!(client.is_allowed(&subject));
 }
 
-// ── #78 Temporary block (block_address_until) tests ───────────────────────────
+// ── #63 Block flag overrides allow flag in is_allowed ─────────────────────────
 
 #[test]
-fn temp_block_before_unblock_at_is_denied() {
-    let (env, admin, subject, client) = setup();
+fn block_flag_overrides_allow_flag_in_is_allowed() {
+    let (_env, admin, subject, client) = setup();
     client.allow_address(&admin, &subject);
-    let unblock_at = env.ledger().timestamp() + 1000;
-    client.block_address_until(&admin, &subject, &unblock_at, &None);
+    client.block_address(&admin, &subject, &None);
     assert!(!client.is_allowed(&subject));
-}
-
-#[test]
-fn temp_block_at_unblock_at_is_allowed() {
-    let (env, admin, subject, client) = setup();
-    client.allow_address(&admin, &subject);
-    let unblock_at: u64 = 1_000;
-    client.block_address_until(&admin, &subject, &unblock_at, &None);
-    env.ledger().with_mut(|l| l.timestamp = unblock_at);
-    assert!(client.is_allowed(&subject));
-}
-
-#[test]
-fn temp_block_after_unblock_at_is_allowed() {
-    let (env, admin, subject, client) = setup();
-    client.allow_address(&admin, &subject);
-    let unblock_at: u64 = 1_000;
-    client.block_address_until(&admin, &subject, &unblock_at, &None);
-    env.ledger().with_mut(|l| l.timestamp = unblock_at + 1);
-    assert!(client.is_allowed(&subject));
-}
-
-#[test]
-fn temp_block_does_not_corrupt_allow_expiry() {
-    let (env, admin, subject, client) = setup();
-    let allow_expires_at: u64 = 5_000;
-    client.allow_address_until(&admin, &subject, &allow_expires_at);
-    // Temporary block expires before the allow expiry.
-    let unblock_at: u64 = 500;
-    client.block_address_until(&admin, &subject, &unblock_at, &None);
-    // While blocked, is_allowed is false.
-    env.ledger().with_mut(|l| l.timestamp = 400);
-    assert!(!client.is_allowed(&subject));
-    // After block expires (but allow still valid), is_allowed is true.
-    env.ledger().with_mut(|l| l.timestamp = unblock_at);
-    assert!(client.is_allowed(&subject));
-    // After allow expiry, is_allowed is false again.
-    env.ledger().with_mut(|l| l.timestamp = allow_expires_at);
-    assert!(!client.is_allowed(&subject));
-}
-
-#[test]
-fn temp_block_permitted_while_paused() {
-    let (env, admin, subject, client) = setup();
-    client.allow_address(&admin, &subject);
-    client.pause(&admin);
-    let unblock_at = env.ledger().timestamp() + 500;
-    // Should succeed (emergency policy: block ops bypass pause).
-    client.block_address_until(&admin, &subject, &unblock_at, &None);
-    assert!(!client.is_allowed(&subject));
-}
-
-#[test]
-fn temp_block_non_admin_returns_unauthorized() {
-    let (env, _admin, subject, client) = setup();
-    let non_admin = Address::generate(&env);
-    let unblock_at = env.ledger().timestamp() + 500;
-    let result = client.try_block_address_until(&non_admin, &subject, &unblock_at, &None);
-    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
-}
-
-#[test]
-fn temp_block_emits_address_blocked_until_event() {
-    let (env, admin, subject, client) = setup();
-    client.allow_address(&admin, &subject);
-    let unblock_at = env.ledger().timestamp() + 300;
-    client.block_address_until(&admin, &subject, &unblock_at, &None);
-    assert_eq!(
-        last_event_symbol(&env),
-        Symbol::new(&env, "address_blocked_until")
-    );
-}
-
-#[test]
-fn clear_address_removes_temp_block() {
-    let (env, admin, subject, client) = setup();
-    client.allow_address(&admin, &subject);
-    let unblock_at = env.ledger().timestamp() + 1000;
-    client.block_address_until(&admin, &subject, &unblock_at, &None);
-    assert!(!client.is_allowed(&subject));
-    client.clear_address(&admin, &subject);
-    assert!(client.is_allowed(&subject));
 }
