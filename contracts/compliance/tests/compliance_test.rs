@@ -281,6 +281,16 @@ fn emits_address_cleared_event() {
     assert_eq!(last_event_symbol(&env), Symbol::new(&env, "address_cleared"));
 }
 
+// ── #79 Default-deny posture ──────────────────────────────────────────────────
+
+/// is_allowed must return false for an address that has never been added via
+/// allow_address or allow_address_until, confirming the default-deny posture.
+#[test]
+fn is_allowed_returns_false_for_address_never_added() {
+    let (_env, _admin, subject, client) = setup();
+    assert!(!client.is_allowed(&subject));
+}
+
 // ── #121 Allow/Block/Clear precedence matrix ─────────────────────────────────
 
 #[test]
