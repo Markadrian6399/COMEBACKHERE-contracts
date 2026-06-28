@@ -4,6 +4,7 @@ mod events;
 mod invoice;
 mod validation;
 
+pub use events::EscrowReleasedEvent;
 pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress, MaybeBytes};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Vec};

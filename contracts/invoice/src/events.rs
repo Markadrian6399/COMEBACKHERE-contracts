@@ -14,7 +14,16 @@
 // - Optional types (Option<u64>) serialize to null or value
 
 use crate::invoice::Invoice;
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{contracttype, Address, Env, Symbol};
+
+#[contracttype]
+#[derive(Clone)]
+pub struct EscrowReleasedEvent {
+    pub id: u64,
+    pub merchant: Address,
+    pub amount_usdc: i128,
+    pub released_at: u64,
+}
 
 pub fn invoice_created(env: &Env, id: u64, invoice: &Invoice) {
     env.events()
@@ -44,8 +53,14 @@ pub fn invoice_refund_requested(env: &Env, id: u64, invoice: &Invoice) {
 }
 
 pub fn escrow_released(env: &Env, id: u64, invoice: &Invoice) {
+    let payload = EscrowReleasedEvent {
+        id,
+        merchant: invoice.merchant.clone(),
+        amount_usdc: invoice.amount_usdc,
+        released_at: env.ledger().timestamp(),
+    };
     env.events()
-        .publish((Symbol::new(env, "escrow_released"), id), invoice.clone());
+        .publish((Symbol::new(env, "escrow_released"), id), payload);
 }
 
 pub fn contract_paused(env: &Env, admin: &Address) {
